@@ -33,7 +33,6 @@ def putPointSummary(metaId, day, hour, dayofweek, latitude, longitude, enginespe
 	if cur.rowcount != 0:
 		print("Not unique!")
 		return
-	print("INSERT INTO point_summary(metaId, day, hour, dayofweek, latitude, longitude, enginespeed, fuelrate, vehicleSpeed) VALUES("+str(metaId)+","+str(day)+","+str(hour)+","+str(dayofweek)+","+str(latitude)+","+str(longitude)+","+str(enginespeed)+","+str(fuelrate)+","+str(vehicleSpeed)+")")
 	cur.execute("INSERT INTO point_summary(metaId, day, hour, dayofweek, latitude, longitude, enginespeed, fuelrate, vehicleSpeed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)", (metaId, day, hour, dayofweek, latitude, longitude, enginespeed, fuelrate, vehicleSpeed))
 	conn.commit()
 
@@ -44,7 +43,7 @@ def getNextPoints(metaId, lowerTime, higherTime):
 	points = []
 
 	#Make sure we don't already have these
-	cur.execute("SELECT metaId, latitude, longitude, AVG(enginespeed) AS enginespeed, AVG(fuelrate) AS fuelrate, AVG(vehicleSpeed) as vehicleSpeed FROM points WHERE metaId = %s AND time >= %s AND time < %s GROUP BY latitude, longitude", (metaId, lowerTime, higherTime))
+	cur.execute("SELECT metaId, TRUNCATE(latitude,4) as latitude, TRUNCATE(longitude, 4) as longitude, AVG(enginespeed) AS enginespeed, AVG(fuelrate) AS fuelrate, AVG(vehicleSpeed) as vehicleSpeed FROM points WHERE metaId = %s AND time >= %s AND time < %s GROUP BY TRUNCATE(latitude,4), TRUNCATE(longitude,4)", (metaId, lowerTime, higherTime))
 	if cur.rowcount == 0:
 		return None
 	return cur.fetchall()
@@ -53,18 +52,15 @@ def getNextPoints(metaId, lowerTime, higherTime):
 def getAllMetadata():
 	global conn
 	global cur
-	cur.execute("SELECT * FROM routeMetadata WHERE id > 310")
+	cur.execute("SELECT * FROM routeMetadata where id > 1933 ORDER BY id DESC")
 	return cur.fetchall()
 
 #Epoch timestamp is in *seconds* not ms
 def getLocalTimes(epochTimestamp, latitude, longitude):
 	utc_date = datetime.datetime.fromtimestamp(epochTimestamp, tz=pytz.utc)
-	print("UTC date: "+str(utc_date))
 	tzName = tz.tzNameAt(latitude, longitude);
-	print("Timezone name: "+str(tzName))
 	localtz = pytz.timezone(tzName)
 	local_date = utc_date.astimezone(localtz)
-	print("Local time: "+str(local_date))
 	weekday = local_date.weekday()
 	hour = local_date.hour
 	isoDate = local_date.isoformat()
@@ -88,9 +84,7 @@ def closeDB():
 
 def summarize(points, timestamp):
 	metaId = points[0]['metaId']
-	print("Lat/long: "+str(points[0]['latitude'])+", "+str(points[0]['longitude']))
 	dayofweek, hour, isoDate = getLocalTimes(timestamp/1000, points[0]['latitude'], points[0]['longitude'])
-	print("Day of week: "+str(dayofweek)+" hour: "+str(hour)+" day: "+str(isoDate))
 	for point in points:
 		putPointSummary(metaId, isoDate, hour, dayofweek, point['latitude'], point['longitude'], point['enginespeed'], point['fuelrate'], point['vehicleSpeed'])
 
@@ -102,13 +96,12 @@ def getFirstTimestamp(metaId):
 	if start is None:
 		return None
 	end = start + (3600000 - start % 3600000)
-	print("End time is "+str(end))
 	return start, end
 
 loadDB()
 metadata = getAllMetadata()
-print(metadata)
 for meta in metadata:
+	print("Summarizing "+str(meta['id']))
 	times = getFirstTimestamp(meta['id'])
 	if times is not None:
 		start = times[0]
