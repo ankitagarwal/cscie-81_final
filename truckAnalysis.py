@@ -30,7 +30,7 @@ conn = None
 cur = None
 idCounter = 0
 metaId = 0
-minMetaId = 4406
+minMetaId = 4408
 
 '''
 Gets the next set of up to 1000 points where the truck was going > 5mph
@@ -58,22 +58,22 @@ def getDriverDates():
 	global cur
 	global conn
 
-	cur.execute("SELECT SUBSTR(stamp, 1, 8) as stamp, driver, truck FROM routeMetadata WHERE id > %s GROUP BY driver, SUBSTR(stamp, 1, 8)", (int(minMetaId)))
+	cur.execute("SELECT datetime, driver, truck FROM routeMetadata WHERE id > %s GROUP BY driver, datetime", (int(minMetaId)))
 	return cur.fetchall()
 
-def getPointsForDriverDate(stampPrefix, driver):
+def getPointsForDriverDate(sqlDate, driver):
 	global cur
 	global conn
 	global minMetaId
-	#print("Getting points "+str(stampPrefix)+" "+str(driver))
+
 	allPoints = []
-	cur.execute("SELECT COUNT(*) as count FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE SUBSTR(routeMetadata.stamp, 1, 8) = %s AND routeMetadata.driver = %s AND routeMetadata.id > %s", (stampPrefix, driver, int(minMetaId)))
+	cur.execute("SELECT COUNT(*) as count FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE datetime = %s AND routeMetadata.driver = %s AND routeMetadata.id > %s", (sqlDate, driver, int(minMetaId)))
 	count = cur.fetchone()['count']
 	if count < 2000:
 		return None
 
 	for mph in range(1,14):
-		cur.execute("SELECT points.* FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE points.vehicleSpeed >= %s AND points.vehicleSpeed < %s AND SUBSTR(routeMetadata.stamp, 1, 8) = %s AND routeMetadata.driver = %s LIMIT 120", (mph*5, (mph+1)*5, stampPrefix, driver))
+		cur.execute("SELECT points.* FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE points.vehicleSpeed >= %s AND points.vehicleSpeed < %s AND datetime = %s AND routeMetadata.driver = %s LIMIT 120", (mph*5, (mph+1)*5, sqlDate, driver))
 		mphCount = cur.rowcount
 		if mphCount < 120:
 			return None
@@ -371,7 +371,7 @@ def threeDPlot(fuelrates, enginespeeds, vehiclespeeds, driver, metaId, truck, la
 
 	plt.show()
 
-def twoDPlot(enginespeeds, vehiclespeeds, driver, truck, stamp, labels):
+def twoDPlot(enginespeeds, vehiclespeeds, driver, truck, datetime, labels):
 	if(len(set(labels)) > 20):
 		print("Too many labels!")
 		return
@@ -383,7 +383,7 @@ def twoDPlot(enginespeeds, vehiclespeeds, driver, truck, stamp, labels):
 	norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
 
-	plt.suptitle(driver+", "+str(stamp)+", "+str(truck), fontsize=20)
+	plt.suptitle(driver+", "+str(datetime)+", "+str(truck), fontsize=20)
 	plt.scatter(enginespeeds, vehiclespeeds, marker='o', c=labels, cmap=cmap, norm=norm)
 	plt.xlabel('Engine Speed', fontsize=18)
 	plt.ylabel('Vehicle Speed', fontsize=16)
@@ -437,8 +437,8 @@ def main():
 	driverDates = getDriverDates()
 	for driverDate in driverDates:
 		driver = driverDate['driver']
-		date = driverDate['stamp']
-		points = getPointsForDriverDate(driverDate['stamp'], driverDate['driver'])
+		date = driverDate['datetime']
+		points = getPointsForDriverDate(driverDate['datetime'], driverDate['driver'])
 		if points is not None:
 			clusteringData = []
 			#Summarize and save points
@@ -452,14 +452,14 @@ def main():
 				#fuelrates.append(point['fuelrate'])
 				vehiclespeeds.append(point['vehicleSpeed'])
 			print("Clustering and labeling data")
+
 			scanResult = clusterData(clusteringData)
 			if scanResult is not None:
 				print("Results are good")
 				xVals, labels = scanResult
 
-				#twoDPlot(enginespeeds, vehiclespeeds, driverDate['driver'], driverDate['truck'],driverDate['stamp'], labels)
-				twoDPlot([x[0] for x in xVals], [x[1] for x in xVals], driverDate['driver'], driverDate['truck'],driverDate['stamp'], labels)
-				#threeDPlot(fuelrates, enginespeeds, vehiclespeeds, driverDate['driver'], driverDate['stamp'], driverDate['truck'], labels)
+				twoDPlot([x[0] for x in xVals], [x[1] for x in xVals], driverDate['driver'], driverDate['truck'],driverDate['datetime'], labels)
+				#threeDPlot(fuelrates, enginespeeds, vehiclespeeds, driverDate['driver'], driverDate['datetime'], driverDate['truck'], labels)
 
 	closeDB()
 

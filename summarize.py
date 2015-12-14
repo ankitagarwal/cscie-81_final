@@ -52,7 +52,7 @@ def getNextPoints(metaId, lowerTime, higherTime):
 def getAllMetadata():
 	global conn
 	global cur
-	cur.execute("SELECT * FROM routeMetadata where id > 1933 ORDER BY id DESC")
+	cur.execute("SELECT * FROM routeMetadata where id > 2281 ORDER BY id ASC")
 	return cur.fetchall()
 
 #Epoch timestamp is in *seconds* not ms

@@ -4,6 +4,7 @@ from os.path import isfile, join
 import matplotlib.pyplot as plt
 import pymysql
 from config import *
+import datetime
 
 
 conn = None
@@ -30,9 +31,12 @@ def insertPoints(data):
 def getMetaDataId(driver, truck, stamp):
 	global conn
 	global cur
-	cur.execute("SELECT * FROM routeMetadata WHERE driver = %s AND stamp = %s", (driver, int(stamp)))
+
+	sqlDateTime = datetime.datetime(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:8]), hour=int(stamp[8:10]), minute=int(stamp[10:12]), second=int(stamp[12:14]))
+
+	cur.execute("SELECT * FROM routeMetadata WHERE driver = %s AND datetime = %s", (driver, sqlDateTime))
 	if cur.rowcount == 0:
-		cur.execute("INSERT INTO routeMetadata(driver, truck, stamp) VALUES (%s, %s, %s)", (driver, truck, stamp))
+		cur.execute("INSERT INTO routeMetadata(driver, truck, datetime) VALUES (%s, %s, %s)", (driver, truck, sqlDateTime))
 		try:
 			conn.commit()
 			metaId = conn.insert_id()
