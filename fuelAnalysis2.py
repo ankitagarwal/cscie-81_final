@@ -6,7 +6,7 @@ from config import *
 
 
 from sklearn.cluster import DBSCAN
-from sklearn import metrics
+from sklearn import metrics, linear_model
 from sklearn.datasets.samples_generator import make_blobs
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
@@ -14,6 +14,7 @@ import pandas as pd
 import scipy
 from sklearn import preprocessing
 from sklearn.ensemble import ExtraTreesClassifier
+import statsmodels.api as sm
 
 conn = None
 cur = None
@@ -57,6 +58,13 @@ def getAllPoints():
     global conn
     global cur
     cur.execute("SELECT * FROM points LIMIT 0, 100000")
+    return cur.fetchall()
+
+def getAllPoints2(speed):
+    global conn
+    global cur
+    maxspeed = speed + 1
+    cur.execute("SELECT enginespeed, vehicleSpeed, fuelrate FROM points Where enginespeed > 0 AND vehicleSpeed > " + str(speed) + " AND vehicleSpeed < " + str(maxspeed) +" ORDER BY RAND() LIMIT 0, 5000")
     return cur.fetchall()
 
 def getAllSummaryDriver():
@@ -206,102 +214,6 @@ def ForestFeatures():
     plt.ylabel("Importance")
     plt.show()
     closeDB()
-
-def classifyWithDriver():
-    global idCounter
-    loadDB()
-    points = getAllSummaryDriver()
-    X = []
-    Y = []
-    i = 0
-    for point in points:
-        point['driverid'] = getDriverID(point['driver'])
-        if (i == 0):
-            print(point)
-            i += 1
-        Y.append(getFuleRateLabel(point['fuelrate']))
-        del (point['id'])
-        del (point['metaId'])
-        del (point['fuelrate'])
-        del (point['day'])
-        del (point['driver'])
-        del (point['stamp'])
-        del (point['truck'])
-        X.append(point)
-    X = pd.DataFrame(X)
-    X = X.as_matrix()
-
-    i = 0
-    for point in X:
-        if (i == 1):
-            break
-        print(point)
-        i += 1
-    X = StandardScaler().fit_transform(X)
-
-    i = 0
-    for point in X:
-        if (i == 1):
-            break
-        print(point)
-        i += 1
-
-    clf = DecisionTreeClassifier()
-    clf.fit(X, Y)
-    print(clf.feature_importances_)
-    closeDB()
-
-def classifyWithDriverAndTruck():
-    global idCounter
-    loadDB()
-    points = getAllSummaryDriverAndTruck()
-    X = []
-    Y = []
-    trucks = []
-    i = 0
-    for point in points:
-        point['driverid'] = getDriverID(point['driver'])
-        if (i == 0):
-            print(point)
-            i += 1
-        Y.append(getFuleRateLabel(point['fuelrate']))
-        trucks.append(point['truck'])
-        del (point['id'])
-        del (point['metaId'])
-        del (point['fuelrate'])
-        del (point['day'])
-        del (point['driver'])
-        del (point['stamp'])
-        del (point['routeMetadata.id'])
-        X.append(point)
-
-    le = preprocessing.LabelEncoder()
-    le.fit(trucks)
-    for point in X:
-        point['truck'] = le.transform(point['truck'])
-    X = pd.DataFrame(X)
-    X = X.as_matrix()
-
-    i = 0
-    for point in X:
-        if (i == 1):
-            break
-        print(point)
-        i += 1
-    X = StandardScaler().fit_transform(X)
-
-    i = 0
-    for point in X:
-        if (i == 1):
-            break
-        print(point)
-        i += 1
-
-    clf = DecisionTreeClassifier()
-    clf.fit(X, Y)
-    print(clf.feature_importances_)
-    closeDB()
-
 def classifyConstLoc():
     global idCounter
     loadDB()
@@ -356,4 +268,105 @@ def classifyConstLoc():
         clf.fit(X, Y)
         print(clf.feature_importances_)
     closeDB()
-ForestFeatures()
+
+def plot() :
+    loadDB()
+    points = getAllPoints2()
+    X = []
+    Y = []
+    for point in points:
+        X.append(point['vehicleSpeed']/point['enginespeed'])
+        Y.append(point['fuelrate'])
+    plt.scatter(X, Y)
+    plt.xlabel("Gear ratio")
+    plt.ylabel("Fuel rate")
+    plt.title("Fuel rate vs Gear ratio (10 00 000 data points)")
+    plt.show()
+
+def plot2() :
+    loadDB()
+    points = getAllPoints2()
+    X = []
+    Y = []
+    for point in points:
+        X.append(point['vehicleSpeed']/point['enginespeed'])
+        Y.append(point['fuelrate'])
+    plt.scatter(X, Y)
+    plt.xlabel("Gear ratio")
+    plt.ylabel("Fuel rate")
+    plt.title("Gear ratio vs Fuel rate \n(Keeping speed constant)")
+    plt.show()
+
+def threeDPlot(fuelrates, vehiclespeeds, gearration, labels):
+
+    fig = plt.figure(1)
+    ax = fig.add_subplot(111, projection='3d')
+    plt.suptitle("Gear vs Vehicle speed vs fuel rate\n(5 00 000 data points)", fontsize=20)
+    cm = plt.get_cmap("Dark2")
+    ax.scatter(gearration, vehiclespeeds, fuelrates, marker='o', cmap=cm)
+    ax.set_xlabel("Gear ratio")
+    ax.set_ylabel("Vehicle Speeds")
+    ax.set_zlabel("Fuel rates")
+    # plt.show()
+    fig.savefig('foo.png')
+
+def plot3D():
+    loadDB()
+    points = getAllPoints2()
+    vehiclespeeds = []
+    gearratio = []
+    fuelrates = []
+    for point in points:
+        gearratio.append(point['vehicleSpeed']/point['enginespeed'])
+        fuelrates.append(point['fuelrate'])
+        vehiclespeeds.append(point['vehicleSpeed'])
+    threeDPlot(fuelrates, vehiclespeeds, gearratio, [])
+
+def regression():
+    loadDB()
+    global cur
+    global conn
+    for speed in range(0, 100):
+        points = getAllPoints2(speed)
+        X = []
+        Y = []
+        for point in points:
+            Y.append(point['vehicleSpeed']/point['enginespeed'])
+            X.append([point['fuelrate']])
+        top = X.copy()
+        top.sort()
+        top.reverse()
+        length = round(len(top)/10)
+        #Top 10% elements
+        top = top[:length]
+        model = linear_model.LinearRegression()
+        results = model.fit(X, Y)
+        r2 = model.score(X, Y)
+
+        points = []
+        for point in top:
+            points.append(point)
+        optimal = np.mean(model.predict(points))
+        # print("Optimal Gear ratio for speed " + str(speed) + " - " + str(optimal))
+        print("Insert into optimalratio values(NULL," + str(speed) + "," + str(optimal) + "," + str(r2) + ");")
+        # cur.execute("Insert into optimalratio values(NULL," + str(speed) + "," + str(optimal) + "," + str(r2) + ")")
+
+def plotOptimal():
+    loadDB()
+    global cur
+    global conn
+    cur.execute("Select * from optimalratio")
+    optimals = cur.fetchall()
+    X = []
+    Y = []
+    for optimal in optimals:
+        X.append(optimal['speed'])
+        Y.append(optimal['gearratio'])
+
+    plt.plot(X, Y)
+    plt.title("Plot of optimal gear ratio for various speeds")
+    plt.xlabel("Vehicle Speed")
+    plt.ylabel("Gear ratio")
+    plt.show()
+
+plotOptimal()
