@@ -64,7 +64,7 @@ def getAllPoints2(speed):
     global conn
     global cur
     maxspeed = speed + 1
-    cur.execute("SELECT enginespeed, vehicleSpeed, fuelrate FROM points Where enginespeed > 0 AND vehicleSpeed > " + str(speed) + " AND vehicleSpeed < " + str(maxspeed) +" ORDER BY RAND() LIMIT 0, 5000")
+    cur.execute("SELECT enginespeed, vehicleSpeed, fuelrate FROM point_summary Where enginespeed > 800 AND vehicleSpeed > " + str(speed) + " AND vehicleSpeed < " + str(maxspeed) +" GROUP BY (enginespeed) LIMIT 5000");
     return cur.fetchall()
 
 def getAllSummaryDriver():
@@ -326,26 +326,19 @@ def regression():
     loadDB()
     global cur
     global conn
-    for speed in range(0, 100):
+    for speed in range(30, 70):
         points = getAllPoints2(speed)
         X = []
         Y = []
         for point in points:
             Y.append(point['vehicleSpeed']/point['enginespeed'])
             X.append([point['fuelrate']])
-        top = X.copy()
-        top.sort()
-        top.reverse()
-        length = round(len(top)/10)
-        #Top 10% elements
-        top = top[:length]
-        model = linear_model.LinearRegression()
-        results = model.fit(X, Y)
-        r2 = model.score(X, Y)
 
-        points = []
-        for point in top:
-            points.append(point)
+        plt.scatter(X, Y)
+        plt.xlabel("Gear ratio")
+        plt.ylabel("Fuel rate")
+        plt.title("Gear ratio v. fuel ratio at Speed "+str(speed))
+        plt.show()
         optimal = np.mean(model.predict(points))
         # print("Optimal Gear ratio for speed " + str(speed) + " - " + str(optimal))
         print("Insert into optimalratio values(NULL," + str(speed) + "," + str(optimal) + "," + str(r2) + ");")
@@ -369,4 +362,4 @@ def plotOptimal():
     plt.ylabel("Gear ratio")
     plt.show()
 
-plotOptimal()
+regression()
