@@ -26,31 +26,29 @@ import statsmodels.formula.api as sm
 from collections import OrderedDict
 import datetime
 
+
 conn = None
 cur = None
 idCounter = 0
 metaId = 0
 minMetaId = 4408
+startDate = None
 
-'''
-Gets the next set of up to 1000 points where the truck was going > 5mph
-'''
-def getNextPoints(metaId):
+def getPointSummaryWithAcceleration():
 	global cur
 	global conn
-	global idCounter
+	cur.execute("SELECT * FROM point_summary WHERE acceleration IS NOT NULL AND acceleration < 4 and vehiclespeed < 50 and vehiclespeed > 47")
+	return cur.fetchall()
 
+'''
+Get a large, randomly distributed set of points for analysis
+'''
+def getPointsSpread():
+	global cur
+	global conn
 
-	cur.execute("SELECT * FROM points WHERE metaId = %s AND id > %s AND vehicleSpeed > 5 ORDER BY id ASC LIMIT 5000", (metaId, idCounter));
-	if cur.rowcount == 0:
-		#This timestamp doesn't have any points, apparently
-		return None
-
-	points = cur.fetchall()
-	idCounter = points[len(points)-1]['id']
-	print("idCounter set to "+str(idCounter))
-	return points
-	
+	cur.execute("SELECT enginespeed as enginespeed, vehicleSpeed as vehicleSpeed, fuelrate as fuelrate FROM points WHERE points.id % 100000 = 0")
+	return cur.fetchall()
 '''
 Gets a set of all driver/dates for which we have legs
 '''
@@ -60,6 +58,30 @@ def getDriverDates():
 
 	cur.execute("SELECT datetime, driver, truck FROM routeMetadata WHERE id > %s GROUP BY driver, datetime", (int(minMetaId)))
 	return cur.fetchall()
+
+def getTruckDate(truck, startDate=datetime.date.fromtimestamp(0)):
+	global cur
+	global conn
+	cur.execute("SELECT datetime FROM routeMetadata WHERE truck = %s AND datetime >= %s ORDER BY datetime ASC LIMIT 1", (truck, startDate))
+	return cur.fetchone()['datetime']
+
+def getPointsForTruckDateRange(truck, dateStart):
+	global cur
+	global conn
+	print("TRUCK START DATE: "+str(dateStart))
+	allPoints = []
+	cur.execute("SELECT COUNT(*) as count FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE datetime >= %s AND datetime <= DATE_ADD(%s, INTERVAL 1 WEEK) AND routeMetadata.truck = %s", (dateStart, dateStart, truck))
+	count = cur.fetchone()['count']
+	if count < 2000:
+		return None
+	for mph in range(1,14):
+		cur.execute("SELECT points.* FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE points.vehicleSpeed >= %s AND points.vehicleSpeed < %s AND datetime >= %s AND datetime <= DATE_ADD(%s, INTERVAL 1 WEEK) AND routeMetadata.truck = %s LIMIT 120", (mph*5, (mph+1)*5, dateStart, dateStart, truck))
+		mphCount = cur.rowcount
+		if mphCount < 120:
+			return None
+		allPoints.extend(cur.fetchall())
+	print("Retrieved Data")
+	return allPoints
 
 def getPointsForDriverDate(sqlDate, driver):
 	global cur
@@ -72,10 +94,10 @@ def getPointsForDriverDate(sqlDate, driver):
 	if count < 2000:
 		return None
 
-	for mph in range(1,14):
+	for mph in range(1,16):
 		cur.execute("SELECT points.* FROM points JOIN routeMetadata ON points.metaId = routeMetadata.id WHERE points.vehicleSpeed >= %s AND points.vehicleSpeed < %s AND datetime = %s AND routeMetadata.driver = %s LIMIT 120", (mph*5, (mph+1)*5, sqlDate, driver))
 		mphCount = cur.rowcount
-		if mphCount < 120:
+		if mphCount < 10:
 			return None
 		allPoints.extend(cur.fetchall())
 	print("Retrieved Data")
@@ -107,14 +129,26 @@ def getEvenSpreadPoints(metaId):
 def storeShift(position, slope, intercept, slopeConf, interceptConf, clustMeanX, clustMeanY, clustVals, r2score):
 	global driver
 	global date
+	global truck
 	global cur
 	global conn
-	sqlDate = datetime.date(int(date[:4]), int(date[4:6]), int(date[6:8]))
-	cur.execute("SELECT * FROM shifting WHERE driver = %s AND day = %s AND position = %s", (driver, sqlDate, position))
-	if cur.rowcount != 0:
-		print("Already present!")
-		return
-	cur.execute("INSERT INTO shifting (driver, day, position, slope, intercept, slopeConf, interceptConf, clustMeanX, clustMeanY, clustVals, r2) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s,%s,%s)", (driver, sqlDate, int(position), float(slope), float(intercept), float(slopeConf), float(interceptConf), float(clustMeanX), float(clustMeanY), int(clustVals),float(r2score)))
+	global startDate
+
+	
+	if truck is not None:
+		print("Storing truck data!")
+		cur.execute("SELECT * FROM shifting WHERE truck = %s AND day = DATE(%s) AND position = %s", (truck, startDate, position))
+		if cur.rowcount != 0:
+			print("Already present!")
+			return
+		cur.execute("INSERT INTO shifting (truck, day, position, slope, intercept, slopeConf, interceptConf, clustMeanX, clustMeanY, clustVals, r2) VALUES(%s, DATE(%s), %s, %s, %s, %s, %s, %s, %s,%s,%s)", (truck, startDate, int(position), float(slope), float(intercept), float(slopeConf), float(interceptConf), float(clustMeanX), float(clustMeanY), int(clustVals),float(r2score)))
+	
+	else:
+		cur.execute("SELECT * FROM shifting WHERE driver = %s AND day = %s AND position = %s", (driver, startDate, position))
+		if cur.rowcount != 0:
+			print("Already present!")
+			return
+		cur.execute("INSERT INTO shifting (driver, day, position, slope, intercept, slopeConf, interceptConf, clustMeanX, clustMeanY, clustVals, r2) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s,%s,%s)", (driver, startDate, int(position), float(slope), float(intercept), float(slopeConf), float(interceptConf), float(clustMeanX), float(clustMeanY), int(clustVals),float(r2score)))
 	conn.commit()
 
 def loadDB():
@@ -321,8 +355,9 @@ def rearrangeLabels(X, labels):
 	newXVals = []
 	i = 0
 	for key in filteredX.keys():
+		print("Storing shift position "+str(i))
 	#linRegress[key] = [rlmRes.params.x, rlmRes.params.Intercept, score, len(x), [slopeConfInterval, intConfInterval], mean]
-#storeShift(position, slope, intercept, slopeConf, interceptConf, clustMean, clustVals, r2score):
+	#storeShift(position, slope, intercept, slopeConf, interceptConf, clustMean, clustVals, r2score):
 		storeShift(i, filteredRegress[key][0], filteredRegress[key][1], filteredRegress[key][4][0], filteredRegress[key][4][1], filteredRegress[key][5][0], filteredRegress[key][5][1], filteredRegress[key][3], filteredRegress[key][2])
 		newXVals.extend(filteredX[key])
 		newLabels.extend([i]*len(filteredX[key]))
@@ -341,37 +376,39 @@ def dbScanDistance(a, b):
 def clusterData(X):
 	original=X
 	X = StandardScaler().fit_transform(X)
-	coreSamples, labels = dbscan(X, min_samples=5, eps=.12, p=4)
-
+	coreSamples, labels = dbscan(X, min_samples=5, eps=.07, p=4)
+	#return original, labels
 	return rearrangeLabels(original, labels)
 
 
 
-def threeDPlot(fuelrates, enginespeeds, vehiclespeeds, driver, metaId, truck, labels):
-
+def threeDPlot(fuelrates, enginespeeds, vehiclespeeds, labels=None, title=""):
+#fuelrates, ratios, vehiclespeeds
 	fig = plt.figure(1)
 	ax = fig.add_subplot(111, projection='3d')
-	plt.suptitle(driver+", "+str(metaId)+", "+str(truck), fontsize=20)
+	plt.suptitle(title, fontsize=20)
 	#ax.auto_scale_xyz([0, 113], [0, 100], [0, 2200])
 	#ax.set_xlim3d([0, 113])
 	#ax.set_ylim3d([0,100])
 	#ax.set_zlim3d([0,2200])
 	#ax.set_autoscale_on(False)
-	cm = plt.get_cmap("Dark2")
-	ax.scatter(enginespeeds, fuelrates, vehiclespeeds, marker='o', c=labels.tolist(), cmap=cm)
-	#Max fuel rate: 113.00
-	#Max VS: 155 (let's use 100. 155 is ridiculous)
-	#Max engine speed: 2207
+	if labels is not None:
+		cm = plt.get_cmap("Dark2")
+		ax.scatter(enginespeeds, fuelrates, vehiclespeeds, marker='o', c=labels.tolist(), cmap=cm)
+		#Max fuel rate: 113.00
+		#Max VS: 155 (let's use 100. 155 is ridiculous)
+		#Max engine speed: 2207
+	else:
+		ax.scatter(enginespeeds, fuelrates, vehiclespeeds,marker='o')
 
 
-
-	ax.set_xlabel('Engine Speeds')
+	ax.set_xlabel('Gear Ratio')
 	ax.set_ylabel('Fuel Rates')
 	ax.set_zlabel('Vehicle Speeds')
 
 	plt.show()
 
-def twoDPlot(enginespeeds, vehiclespeeds, driver, truck, datetime, labels):
+def twoDPlot(enginespeeds, vehiclespeeds, labels, title="Vehicle speed vs engine speed"):
 	if(len(set(labels)) > 20):
 		print("Too many labels!")
 		return
@@ -379,11 +416,11 @@ def twoDPlot(enginespeeds, vehiclespeeds, driver, truck, datetime, labels):
 	cmap = plt.cm.prism
 	cmaplist = [cmap(i) for i in range(cmap.N)]
 	cmap = cmap.from_list('Custom cmap', cmaplist, cmap.N)
-	bounds = np.linspace(0, 19, 20)
+	bounds = np.linspace(-1, 19, 21)
 	norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
 
-	plt.suptitle(driver+", "+str(datetime)+", "+str(truck), fontsize=20)
+	plt.suptitle(title, fontsize=20)
 	plt.scatter(enginespeeds, vehiclespeeds, marker='o', c=labels, cmap=cmap, norm=norm)
 	plt.xlabel('Engine Speed', fontsize=18)
 	plt.ylabel('Vehicle Speed', fontsize=16)
@@ -401,34 +438,50 @@ def polyRegression(fuelrates, enginespeeds,driver, metaId, truck):
 	plt.ylabel('Fuel Rate', fontsize=16)
 	plt.show()
 
-def knnGraph(X):
-	knn_graph = kneighbors_graph(X, 9, include_self=False)
-
-	for connectivity in (None, knn_graph):
-	    for n_clusters in (9, 3):
-	        plt.figure(figsize=(10, 4))
-	        for index, linkage in enumerate(('average', 'complete', 'ward')):
-	            plt.subplot(1, 3, index + 1)
-	            model = AgglomerativeClustering(linkage=linkage,
-	                                            connectivity=connectivity,
-	                                            n_clusters=n_clusters)
-	            t0 = time.time()
-	            model.fit(X)
-	            elapsed_time = time.time() - t0
-	            plt.scatter(X[:, 0], X[:, 1], c=model.labels_,
-	                        cmap=plt.cm.spectral)
-	            plt.title('linkage=%s (time %.2fs)' % (linkage, elapsed_time),
-	                      fontdict=dict(verticalalignment='top'))
-	            plt.axis('equal')
-	            plt.axis('off')
-
-	            plt.subplots_adjust(bottom=0, top=.89, wspace=0,
-	                                left=0, right=1)
-	            plt.suptitle('n_cluster=%i, connectivity=%r' %
-	                         (n_clusters, connectivity is not None), size=17)
 
 
-plt.show()
+def runPoints(points, title):
+	if points is not None:
+		clusteringData = []
+		#Summarize and save points
+		enginespeeds = []
+		#fuelrates = []
+		vehiclespeeds = []
+		for point in points:
+			clusteringData.append([point['enginespeed'],point['vehicleSpeed']])
+			###UNCOMMENT THIS FOR 3D PLOTS ###
+			enginespeeds.append(point['enginespeed'])
+			#fuelrates.append(point['fuelrate'])
+			vehiclespeeds.append(point['vehicleSpeed'])
+		print("Clustering and labeling data")
+
+		scanResult = clusterData(clusteringData)
+		if scanResult is not None:
+			print("Results are good")
+			xVals, labels = scanResult
+
+			twoDPlot([x[0] for x in xVals], [x[1] for x in xVals], labels, title =title)
+			#threeDPlot(fuelrates, enginespeeds, vehiclespeeds, driverDate['driver'], driverDate['datetime'], driverDate['truck'], labels)
+
+'''
+Gets larger amounts of data specifically by truck VIN, rather than a specific
+driver/date combo
+'''
+def mainByTruck():
+	global truck
+	global startDate 
+	loadDB()
+	#"1XKAA49", "1XPBD49", 
+	trucks = ["1XPXD49", "N133334", "N133335", "N165625", "N165627"]
+	for truck_loc in trucks:
+		truck = truck_loc
+		startDate = getTruckDate(truck)
+		for i in range(10):
+			print("Start date is: "+str(startDate))
+			points = getPointsForTruckDateRange(truck, startDate)
+			runPoints(points, truck+" start "+str(startDate))
+			startDate = startDate + datetime.timedelta(days=7)
+	closeDB()
 
 def main():
 	global driver
@@ -439,30 +492,66 @@ def main():
 		driver = driverDate['driver']
 		date = driverDate['datetime']
 		points = getPointsForDriverDate(driverDate['datetime'], driverDate['driver'])
+		runPoints(points, str(driverDate['driver'])+" "+str(driverDate['truck'])+" "+str(driverDate['datetime']))
+
+def ankitPlot():
+	global driver
+	global date
+	loadDB()
+	driverDates = getDriverDates()
+	for driverDate in driverDates:
+		driver = driverDate['driver']
+		date = driverDate['datetime']
+		points = getPointsForDriverDate(driverDate['datetime'], driverDate['driver'])
 		if points is not None:
-			clusteringData = []
-			#Summarize and save points
-			enginespeeds = []
-			#fuelrates = []
-			vehiclespeeds = []
+			speeds = []
+			fuels = []
 			for point in points:
-				clusteringData.append([point['enginespeed'],point['vehicleSpeed']])
-				###UNCOMMENT THIS FOR 3D PLOTS ###
-				enginespeeds.append(point['enginespeed'])
-				#fuelrates.append(point['fuelrate'])
-				vehiclespeeds.append(point['vehicleSpeed'])
-			print("Clustering and labeling data")
+				if (point['vehicleSpeed']/(point['fuelrate']*0.264172)) < 50:
+					speeds.append(point['vehicleSpeed'])
+					fuels.append(point['vehicleSpeed']/(point['fuelrate']*0.264172))
 
-			scanResult = clusterData(clusteringData)
-			if scanResult is not None:
-				print("Results are good")
-				xVals, labels = scanResult
+			plt.suptitle("MPG by Vehicle Speed", fontsize=20)
+			plt.scatter(speeds, fuels, marker='o')
+			plt.xlabel('Vehicle Speed', fontsize=18)
+			plt.ylabel('MPG', fontsize=16)
+			plt.show()
 
-				twoDPlot([x[0] for x in xVals], [x[1] for x in xVals], driverDate['driver'], driverDate['truck'],driverDate['datetime'], labels)
-				#threeDPlot(fuelrates, enginespeeds, vehiclespeeds, driverDate['driver'], driverDate['datetime'], driverDate['truck'], labels)
-
+		#runPoints(points, str(driverDate['driver'])+" "+str(driverDate['truck'])+" "+str(driverDate['datetime']))
 	closeDB()
 
 
-main()
+
+def scatterGearRatios():
+	loadDB()
+	points = getPointSummaryWithAcceleration()
+	fuelrates = []
+	accelerations = []
+	ratios = []
+
+	for point in points:
+		fuelrates.append(point['fuelrate'])
+		accelerations.append(point['acceleration'])
+		ratios.append(float(point['vehiclespeed']/point['enginespeed']))
+	'''plt.suptitle("Fuel Rates and Accelerations", fontsize=20)
+	plt.scatter(fuelrates, accelerations, marker='o')
+	plt.xlabel('Fuel Rate', fontsize=18)
+	plt.ylabel('Acceleration', fontsize=16)
+	plt.show()'''
+	fig = plt.figure(1)
+	ax = fig.add_subplot(111, projection='3d')
+	plt.suptitle("Fuel Rate, Acceleration, and Gear Ratios", fontsize=20)
+	ax.scatter(fuelrates, accelerations, ratios, marker='o', s=1)
+	ax.set_xlabel('Fuel Rate')
+	ax.set_ylabel('Accelerations')
+	ax.set_zlabel('Gear Ratios')
+
+	plt.show()
+
+	closeDB()
+#mainByTruck()
+#main()
+#scatterGearRatios()
+scatterGearRatios()
+#main()
 #mainOld()
