@@ -32,7 +32,7 @@ def getMetaDataId(driver, truck, stamp):
 	global conn
 	global cur
 
-	sqlDateTime = datetime.datetime(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:8]), hour=int(stamp[8:10]), minute=int(stamp[10:12]), second=int(stamp[12:14]))
+	sqlDateTime = datetime.date(int(stamp[:4]), int(stamp[4:6]), int(stamp[6:8]))
 
 	cur.execute("SELECT * FROM routeMetadata WHERE driver = %s AND datetime = %s", (driver, sqlDateTime))
 	if cur.rowcount == 0:

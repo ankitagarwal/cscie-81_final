@@ -37,8 +37,9 @@ startDate = None
 def getPointSummaryWithAcceleration():
 	global cur
 	global conn
-	cur.execute("SELECT * FROM point_summary WHERE acceleration IS NOT NULL AND acceleration < 4 and vehiclespeed < 50 and vehiclespeed > 47")
+	cur.execute("SELECT AVG(gearratio) as gearratio, AVG(fuelrate) as fuelrate, AVG(vehiclespeed) as vehiclespeed, AVG(enginespeed) as enginespeed, AVG(acceleration) as acceleration FROM (SELECT (vehiclespeed/enginespeed) as gearratio, fuelrate, vehiclespeed, enginespeed, acceleration FROM point_summary WHERE acceleration IS NOT NULL AND acceleration > 0.75 AND acceleration < 0.8 AND vehiclespeed < 70) as a WHERE gearratio < 0.06 GROUP BY TRUNCATE(acceleration, 2), TRUNCATE(gearratio,3)")
 	return cur.fetchall()
+
 
 '''
 Get a large, randomly distributed set of points for analysis
@@ -408,23 +409,13 @@ def threeDPlot(fuelrates, enginespeeds, vehiclespeeds, labels=None, title=""):
 
 	plt.show()
 
-def twoDPlot(enginespeeds, vehiclespeeds, labels, title="Vehicle speed vs engine speed"):
-	if(len(set(labels)) > 20):
-		print("Too many labels!")
-		return
-	#labelSet = sort(set(labels))
-	cmap = plt.cm.prism
-	cmaplist = [cmap(i) for i in range(cmap.N)]
-	cmap = cmap.from_list('Custom cmap', cmaplist, cmap.N)
-	bounds = np.linspace(-1, 19, 21)
-	norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
-
+def twoDPlot(X, Y, Z, xlabel= "xVals", ylabel="yVals", title="Vehicle speed vs engine speed"):
 
 	plt.suptitle(title, fontsize=20)
-	plt.scatter(enginespeeds, vehiclespeeds, marker='o', c=labels, cmap=cmap, norm=norm)
-	plt.xlabel('Engine Speed', fontsize=18)
-	plt.ylabel('Vehicle Speed', fontsize=16)
-	plt.colorbar(ticks=bounds)
+	plt.scatter(X, Y, marker='o', s=8, lw = 0, c=Z, cmap=plt.cm.spring, norm=mpl.colors.LogNorm())
+	plt.xlabel(xlabel, fontsize=18)
+	plt.ylabel(ylabel, fontsize=16)
+	plt.colorbar()
 	plt.show()
 
 def polyRegression(fuelrates, enginespeeds,driver, metaId, truck):
@@ -525,28 +516,36 @@ def ankitPlot():
 def scatterGearRatios():
 	loadDB()
 	points = getPointSummaryWithAcceleration()
+
+	gearratios = []
 	fuelrates = []
+	vehiclespeeds = []
 	accelerations = []
-	ratios = []
+	enginespeeds = []
+	mpgs = []
 
+#SELECT gearratio, fuelrate, vehiclespeed, enginespeed, acceleration
 	for point in points:
-		fuelrates.append(point['fuelrate'])
-		accelerations.append(point['acceleration'])
-		ratios.append(float(point['vehiclespeed']/point['enginespeed']))
-	'''plt.suptitle("Fuel Rates and Accelerations", fontsize=20)
-	plt.scatter(fuelrates, accelerations, marker='o')
-	plt.xlabel('Fuel Rate', fontsize=18)
-	plt.ylabel('Acceleration', fontsize=16)
-	plt.show()'''
-	fig = plt.figure(1)
-	ax = fig.add_subplot(111, projection='3d')
-	plt.suptitle("Fuel Rate, Acceleration, and Gear Ratios", fontsize=20)
-	ax.scatter(fuelrates, accelerations, ratios, marker='o', s=1)
-	ax.set_xlabel('Fuel Rate')
-	ax.set_ylabel('Accelerations')
-	ax.set_zlabel('Gear Ratios')
+		if float(point['vehiclespeed'])/(float(point['fuelrate'])*3.7854) < 10.0:
+			fuelrates.append(point['fuelrate'])
+			accelerations.append(point['acceleration'])
+			gearratios.append(point['gearratio'])
+			vehiclespeeds.append(point['vehiclespeed'])
+			enginespeeds.append(point['enginespeed'])
+			mpgs.append(float(point['vehiclespeed'])/(float(point['fuelrate'])*3.7854))
 
-	plt.show()
+
+	twoDPlot(accelerations,mpgs, mpgs, xlabel= "Gear Ratio", ylabel="Acceleration", title="Gear Ratio, Acceleration, and MPG")
+	'''fig = plt.figure(1)
+	ax = fig.add_subplot(111, projection='3d')
+	plt.suptitle("Accelerations, gear ratio, vehicle speed, colored by MPG", fontsize=20)
+	p = ax.scatter(accelerations, gearratios, vehiclespeeds, marker='o', s=4,lw = 0, c=mpgs, norm=mpl.colors.LogNorm(),cmap=plt.cm.spring)
+	ax.set_xlabel('Acceleration')
+	ax.set_ylabel('Gear Ratio')
+	ax.set_zlabel('Vehicle Speed')
+	fig.colorbar(p)
+
+	plt.show()'''
 
 	closeDB()
 #mainByTruck()

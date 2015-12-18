@@ -326,7 +326,7 @@ def regression():
     loadDB()
     global cur
     global conn
-    for speed in range(30, 70):
+    for speed in range(60, 70):
         points = getAllPoints2(speed)
         X = []
         Y = []

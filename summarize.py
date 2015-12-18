@@ -14,6 +14,20 @@ tz = None
 conn = None
 cur = None
 
+
+
+def addAcceleration(metaId):
+	global cur
+	global conn
+	cur.execute("UPDATE point_summary JOIN (SELECT metaId, vehicleSpeed as firstSpeed, MAX(vehicleSpeed) as maxSpeed, MIN(vehicleSpeed) as minSpeed, MAX(time) - MIN(time) as timeDiff, TRUNCATE(latitude, 4) as latitude, TRUNCATE(longitude, 4) as longitude FROM points WHERE metaId = %s GROUP BY TRUNCATE(latitude,4), TRUNCATE(longitude,4) ORDER BY time ASC) as b ON point_summary.metaId = b.metaId AND point_summary.latitude = b.latitude AND point_summary.longitude = b.longitude SET acceleration = (((maxSpeed-minSpeed)*0.44704)/(timeDiff/1000)) WHERE firstSpeed = minSpeed AND maxSpeed > 10 AND timeDiff < 10000 AND timeDiff > 1;", int(metaId));
+	conn.commit()
+
+def addPoints(metaId):
+	global cur
+	global conn
+	cur.execute("UPDATE point_summary JOIN (SELECT metaId, COUNT(*) as count, latitude, longitude, MIN(time) as minTime, MAX(time) as maxTime FROM points WHERE metaId = %s GROUP BY TRUNCATE(latitude,4), TRUNCATE(longitude,4) ORDER BY time ASC) as b ON point_summary.metaId = b.metaId AND point_summary.latitude = b.latitude AND point_summary.longitude = b.longitude SET points = count", metaId)
+	cur.commit()
+
 def getFirstPointTS(metaId):
 	global cur
 	global conn
@@ -36,6 +50,9 @@ def putPointSummary(metaId, day, hour, dayofweek, latitude, longitude, enginespe
 	cur.execute("INSERT INTO point_summary(metaId, day, hour, dayofweek, latitude, longitude, enginespeed, fuelrate, vehicleSpeed) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)", (metaId, day, hour, dayofweek, latitude, longitude, enginespeed, fuelrate, vehicleSpeed))
 	conn.commit()
 
+def getPointSpeeds(metaId):
+	cur.execute("SELECT id, time, vehicleSpeed FROM points WHERE metaId = %s ",metaId)
+	return cur.fetchall()
 
 def getNextPoints(metaId, lowerTime, higherTime):
 	global cur
@@ -52,7 +69,7 @@ def getNextPoints(metaId, lowerTime, higherTime):
 def getAllMetadata():
 	global conn
 	global cur
-	cur.execute("SELECT * FROM routeMetadata where id > 2281 ORDER BY id ASC")
+	cur.execute("SELECT * FROM routeMetadata where id > 2353 ORDER BY id ASC")
 	return cur.fetchall()
 
 #Epoch timestamp is in *seconds* not ms
@@ -98,21 +115,38 @@ def getFirstTimestamp(metaId):
 	end = start + (3600000 - start % 3600000)
 	return start, end
 
-loadDB()
-metadata = getAllMetadata()
-for meta in metadata:
-	print("Summarizing "+str(meta['id']))
-	times = getFirstTimestamp(meta['id'])
-	if times is not None:
-		start = times[0]
-		end = times[1]
-		points = getNextPoints(meta['id'], start, end)
-		while points is not None:
-			#Summarize and save points
-			summarize(points, int((start+end)/2))
-			start = end
-			end = start + 3600000
+def makeAccelerations():
+	loadDB()
+	for i in range(2015,3000):
+		print("Running "+str(i))
+		addAcceleration(i)
+	closeDB()
+
+def addPointCount():
+	loadDb()
+	for i in range(1000, 3000):
+		print("Running "+str(i))
+		addPoints(i)
+	closeDB()
+
+def main():
+	loadDB()
+	metadata = getAllMetadata()
+	for meta in metadata:
+		print("Summarizing "+str(meta['id']))
+		if times is not None:
+			start = times[0]
+			end = times[1]
 			points = getNextPoints(meta['id'], start, end)
+			while points is not None:
+				#Summarize and save points
+				summarize(points, int((start+end)/2))
+				start = end
+				end = start + 3600000
+				points = getNextPoints(meta['id'], start, end)
 
 
-closeDB()
+	closeDB()
+
+makeAccelerations()
+

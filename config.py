@@ -1,5 +1,5 @@
 MYSQL_PORT = 3306
-MYSQL_DATABASE = 'cscie81_final'
+MYSQL_DATABASE = 'trucking'
 MYSQL_HOST = '127.0.0.1'
-MYSQL_PASSWORD = ''
+MYSQL_PASSWORD = 'root'
 MYSQL_USER = 'root'
