@@ -15,6 +15,15 @@ import scipy
 from sklearn import preprocessing
 from sklearn.ensemble import ExtraTreesClassifier
 import statsmodels.api as sm
+from sklearn.preprocessing import PolynomialFeatures
+from scipy.optimize import differential_evolution
+from sklearn.metrics import mean_squared_error
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import make_pipeline
+
+from sklearn.cross_validation import train_test_split
+
 
 conn = None
 cur = None
@@ -60,11 +69,29 @@ def getAllPoints():
     cur.execute("SELECT * FROM points LIMIT 0, 100000")
     return cur.fetchall()
 
-def getAllPoints2(speed):
+def getAllPoints3(speed):
     global conn
     global cur
     maxspeed = speed + 1
-    cur.execute("SELECT enginespeed, vehicleSpeed, fuelrate FROM point_summary Where enginespeed > 800 AND vehicleSpeed > " + str(speed) + " AND vehicleSpeed < " + str(maxspeed) +" GROUP BY (enginespeed) LIMIT 5000");
+    cur.execute("SELECT enginespeed, vehicleSpeed, fuelrate, acceleration FROM point_summary Where enginespeed > 0 "
+                "AND vehicleSpeed > 0 AND"
+                " acceleration > 0  ORDER BY RAND() LIMIT 0, 50000")
+    return cur.fetchall()
+
+def getAllPoints2(speed):
+    loadDB()
+    global conn
+    global cur
+    lat = 30.8681
+    long = -97.5846
+    maxspeed = speed + 1
+    minLat = lat - 1
+    maxLat = lat + 1
+    minLong = long - 1
+    maxLong = long + 1
+    cur.execute("SELECT * FROM point_summary Where enginespeed > 0 "
+                "AND vehicleSpeed > " + str(speed) + " AND vehicleSpeed < " + str(maxspeed) + " AND acceleration > 0 AND acceleration < 0.5 "
+                "AND  latitude<" + str(maxLat) + " AND latitude>" + str(minLat) + " AND longitude<" + str(maxLong) + " AND longitude>" + str(minLong) +" ORDER BY RAND() LIMIT 0, 20000")
     return cur.fetchall()
 
 def getAllSummaryDriver():
@@ -285,7 +312,7 @@ def plot() :
 
 def plot2() :
     loadDB()
-    points = getAllPoints2()
+    points = getAllPoints2(40)
     X = []
     Y = []
     for point in points:
@@ -295,6 +322,26 @@ def plot2() :
     plt.xlabel("Gear ratio")
     plt.ylabel("Fuel rate")
     plt.title("Gear ratio vs Fuel rate \n(Keeping speed constant)")
+    plt.show()
+
+def plot3() :
+    loadDB()
+    points = getAllPoints2(10)
+    X = []
+    Y = []
+    n = []
+    for point in points:
+        X.append(point['vehicleSpeed']/point['enginespeed'])
+        Y.append(point['fuelrate'])
+        n.append(point['acceleration'])
+    fig, ax = plt.subplots()
+    ax.scatter(X, Y)
+
+    for i, txt in enumerate(n):
+        ax.annotate(txt, (X[i], Y[i]), rotation=45, textcoords='offset points')
+    ax.set_xlabel("Gear ratio")
+    ax.set_ylabel("Fuel rate")
+    ax.set_title("Gear ratio vs Fuel rate \n(Keeping speed constant)")
     plt.show()
 
 def threeDPlot(fuelrates, vehiclespeeds, gearration, labels):
@@ -312,14 +359,14 @@ def threeDPlot(fuelrates, vehiclespeeds, gearration, labels):
 
 def plot3D():
     loadDB()
-    points = getAllPoints2()
+    points = getAllPoints3()
     vehiclespeeds = []
     gearratio = []
     fuelrates = []
     for point in points:
         gearratio.append(point['vehicleSpeed']/point['enginespeed'])
         fuelrates.append(point['fuelrate'])
-        vehiclespeeds.append(point['vehicleSpeed'])
+        vehiclespeeds.append(point['acceleration'])
     threeDPlot(fuelrates, vehiclespeeds, gearratio, [])
 
 def regression():
@@ -333,12 +380,26 @@ def regression():
         for point in points:
             Y.append(point['vehicleSpeed']/point['enginespeed'])
             X.append([point['fuelrate']])
+        top = X.copy()
+        top.sort()
+        top.reverse()
+        length = round(len(top)/10)
+        #Top 10% elements
+        top = top[:length]
+        model = linear_model.LinearRegression()
+        results = model.fit(X, Y)
+        r2 = model.score(X, Y)
 
-        plt.scatter(X, Y)
-        plt.xlabel("Gear ratio")
-        plt.ylabel("Fuel rate")
-        plt.title("Gear ratio v. fuel ratio at Speed "+str(speed))
+        plt.scatter(X, Y,  color='black')
+        plt.plot(X, model.predict(X), color='blue', linewidth=3)
+        plt.title("Linear regression, speed fixed at 80")
+        plt.xlabel("Fuel rate")
+        plt.ylabel("Gear ratio")
         plt.show()
+
+        points = []
+        for point in top:
+            points.append(point)
         optimal = np.mean(model.predict(points))
         # print("Optimal Gear ratio for speed " + str(speed) + " - " + str(optimal))
         print("Insert into optimalratio values(NULL," + str(speed) + "," + str(optimal) + "," + str(r2) + ");")
@@ -362,4 +423,63 @@ def plotOptimal():
     plt.ylabel("Gear ratio")
     plt.show()
 
-regression()
+def FindPolyregDegree():
+    loadDB()
+    points = getAllPoints2(30)
+    print(len(points))
+    X = []
+    Y = []
+    for point in points:
+        Y.append(point['vehicleSpeed']/point['enginespeed'])
+        X.append([point['fuelrate']])
+
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.8)
+    train_error = np.empty(10)
+    test_error = np.empty(10)
+    for degree in range(10):
+        est = make_pipeline(PolynomialFeatures(degree), Ridge())
+        est.fit(X_train, y_train)
+        train_error[degree] = mean_squared_error(y_train, est.predict(X_train))
+        test_error[degree] = mean_squared_error(y_test, est.predict(X_test))
+
+    plt.plot(np.arange(10), train_error, color='green', label='train')
+    plt.plot(np.arange(10), test_error, color='red', label='test')
+    plt.title("Degree vs Error - Finding optimal model for regression")
+    plt.ylabel('log(mean squared error)')
+    plt.xlabel('degree')
+    plt.legend(loc='lower left')
+    plt.show()
+
+def polyReg():
+    points = getAllPoints2(45)
+    print(points)
+    X = []
+    Y = []
+    for point in points:
+        Y.append(point['vehiclespeed']/point['enginespeed'])
+        X.append([point['fuelrate']])
+    est = make_pipeline(PolynomialFeatures(4), Ridge())
+    est.fit(X, Y)
+
+    plt.scatter(X, Y,  color='black')
+    # plt.plot(X, est.predict(X), color='blue', linewidth=3)
+    plt.ylabel('Gear ratio')
+    plt.xlabel('Fuel rate')
+    plt.legend(loc='upper right')  #, fontsize='small')
+    plt.title("Gear ratio vs Fuel rate \n Keeping speed, Acceleration AND location constant")
+    plt.show()
+
+
+def eq(x):
+        # f = g**2 + a**2 + s**2
+        return x[0]**2 + x[1]**2 + x[2]**2
+def optimize():
+    import numpy as np
+
+
+    bounds = [(0, 1), (0, 5), (20,21)]
+    result = differential_evolution(eq, bounds)
+    print(result)
+
+polyReg()
+
